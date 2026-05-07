@@ -1,0 +1,7 @@
+
+services:
+  examen:
+    image: xxchronosxx/api-afouallah:latest
+    ports:
+      - 80:8000
+    restart: always
