@@ -10,9 +10,13 @@ on:
     paths:
       - app/**
 
+concurrency:
+  group: ec2-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-and-deploy:
-    name: Build, Push and Deploy to AWS
+  build-and-push:
+    name: Build and Push Docker image
     runs-on: ubuntu-latest
     
     steps:
@@ -31,13 +35,14 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: true 
+          push: ${{ github.event_name == 'push' }}
           tags: |
             ${{ secrets.DHUB_USER }}/${{ secrets.DOCKER_APP_NAME }}:latest
             ${{ secrets.DHUB_USER }}/${{ secrets.DOCKER_APP_NAME }}:${{ github.sha }}
       
       # 4. Copy docker-compose.yml via SCP
       - name: Copy docker-compose to AWS
+        if: github.event_name == 'push'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_IP }}
@@ -48,8 +53,9 @@ jobs:
           target: "/home/${{ secrets.EC2_USER }}/"
           strip_components: 0
       
-      # 5. Deploy Docker services on AWS
+      # 5. Deploy Docker services on AWS (push only)
       - name: Deploy to AWS EC2
+        if: github.event_name == 'push'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_IP }}
@@ -63,20 +69,10 @@ jobs:
             # Navigate to the directory
             cd /home/${{ secrets.EC2_USER }}
             
-            # Pull the latest image
-            docker pull ${{ secrets.DHUB_USER }}/${{ secrets.DOCKER_APP_NAME }}:latest
-            
-            # Stop and remove old containers
-            docker compose down
-            
-            # Remove old images (optional: remove all to force fresh pull)
-            docker rmi ${{ secrets.DHUB_USER }}/${{ secrets.DOCKER_APP_NAME }}:latest || true
-            
-            # Start new containers
-            docker compose up -d
-            
-            # Clean up unused images and volumes
-            docker system prune -af --volumes
+            # Recreate stack from the latest image in a single flow
+            docker compose down --remove-orphans
+            docker compose pull
+            docker compose up -d --remove-orphans
             
             # Show running containers (for debugging)
             docker ps
